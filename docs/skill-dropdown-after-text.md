@@ -104,13 +104,13 @@ some prose /sec
 skill:
 ```
 
-- Added apply behavior that turns a selected mid-text skill into:
+- Added apply behavior that replaces the full draft buffer with:
 
 ```text
 /skill:<name>
 ```
 
-and replaces the full draft buffer with that single line.
+The generated line ends with one literal space after the skill name.
 
 `packages/tui/src/components/editor.ts`:
 
@@ -268,6 +268,8 @@ Expected:
 ```text
 /skill:<selected-skill>
 ```
+
+The generated line ends with one literal space after the selected skill name.
 
 Then pressing Enter invokes the skill.
 

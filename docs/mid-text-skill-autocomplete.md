@@ -41,6 +41,8 @@ explain this
 /skill:security-scan
 ```
 
+The replacement ends with one literal space, leaving the cursor ready for the next word without storing invisible whitespace in this example.
+
 Submitting text with an inline skill token invokes the skill and passes the surrounding prompt text as the skill args:
 
 ```text
