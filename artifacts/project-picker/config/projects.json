@@ -1,0 +1,12 @@
+{
+  "projects": [
+    {
+      "name": "Example Project",
+      "path": "__HOME__/Projects/Example Project"
+    },
+    {
+      "name": "Another Project",
+      "path": "__HOME__/Projects/Another Project"
+    }
+  ]
+}

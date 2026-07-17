@@ -1,0 +1,5 @@
+extra-keys = [[ \
+  'ESC', '/', '-', 'HOME', 'UP', 'END', 'PGUP', {macro: "voiceclip ENTER", display: "🎙"} \
+], [ \
+  'TAB', 'CTRL', 'ALT', 'LEFT', 'DOWN', 'RIGHT', 'PGDN', {key: 'PASTE', display: 'PASTE'} \
+]]

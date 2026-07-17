@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+import sys
+from cmux_project_lib import exec_omp, parse_common, resolve_project
+force_pick, explicit, rest = parse_common(sys.argv[1:])
+project = resolve_project(force_pick=force_pick, explicit=explicit)
+exec_omp(project, rest, resume=True)

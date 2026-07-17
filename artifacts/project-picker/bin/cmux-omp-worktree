@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+import os
+import sys
+from cmux_project_lib import create_worktree, exec_omp, parse_common, resolve_project
+force_pick, explicit, rest = parse_common(sys.argv[1:])
+project = resolve_project(force_pick=force_pick, explicit=explicit)
+worktree = create_worktree(project)
+print(f"Created worktree: {worktree['path']}")
+exec_omp(worktree, rest)
