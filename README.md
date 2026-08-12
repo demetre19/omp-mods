@@ -20,6 +20,7 @@ This collection documents practical changes made to OMP's terminal UI, prompt ed
 | Project picker (`ompp`) | Uses one numbered project list to start OMP in a project or switch the active OMP session without manually typing paths | [`docs/project-picker.md`](./docs/project-picker.md) and [`artifacts/project-picker/`](./artifacts/project-picker/) |
 | Termux VoiceClip dictation | Adds a one-tap Android speech-to-clipboard key for Mobile-OMP and Termux workflows | [`docs/termux-voiceclip-dictation.md`](./docs/termux-voiceclip-dictation.md) and [`artifacts/voiceclip/`](./artifacts/voiceclip/) |
 | External SkillOpt storage | Moves reusable SkillOpt state and shared skills to an external volume while keeping OMP and Codex discovery paths aligned | [`docs/skillopt-omp-codex-external-storage.md`](./docs/skillopt-omp-codex-external-storage.md) |
+| Clipboard-to-device shortcuts | Sends the current macOS clipboard to a phone, laptop, Mac mini, or every configured device through a private Tailscale connector and STM Desktop Listener command shortcuts | [`docs/clipboard-to-tailscale-device.md`](./docs/clipboard-to-tailscale-device.md) and [`artifacts/msg/`](./artifacts/msg/) |
 
 ## How to use this repository
 

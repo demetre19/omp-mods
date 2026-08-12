@@ -1,0 +1,55 @@
+#!/bin/sh
+set -u
+
+: "${CONNECTOR_URL:?Set CONNECTOR_URL to your private Tailscale connector URL}"
+TMP_ROOT=${TMPDIR:-/tmp}
+
+usage() {
+    printf 'Usage: %s {laptop|mini|phone|all} [message]\n' "${0##*/}" >&2
+    printf 'With no message argument, the message is read from standard input.\n' >&2
+    exit 64
+}
+
+[ "$#" -ge 1 ] || usage
+target=$1
+shift
+case "$target" in
+    laptop|mini|phone|all) ;;
+    *) usage ;;
+esac
+
+message_file=$(mktemp "$TMP_ROOT/connector-send.XXXXXX") || exit 1
+response_file=
+trap 'rm -f "$message_file" ${response_file:+"$response_file"}' EXIT HUP INT TERM
+
+if [ "$#" -gt 0 ]; then
+    printf '%s' "$*" > "$message_file"
+else
+    cat > "$message_file"
+fi
+
+bytes=$(wc -c < "$message_file" | tr -d ' ')
+if [ "$bytes" -lt 1 ] || [ "$bytes" -gt 16384 ]; then
+    printf 'Message must be between 1 and 16384 UTF-8 bytes.\n' >&2
+    exit 65
+fi
+
+response_file=$(mktemp "$TMP_ROOT/connector-response.XXXXXX") || exit 1
+status=$(curl \
+    --silent \
+    --show-error \
+    --connect-timeout 5 \
+    --max-time 15 \
+    --header 'Content-Type: text/plain; charset=utf-8' \
+    --data-binary "@$message_file" \
+    --output "$response_file" \
+    --write-out '%{http_code}' \
+    "$CONNECTOR_URL/send/$target") || exit 69
+
+if [ "$status" != 202 ]; then
+    printf 'Connector rejected the message (HTTP %s): ' "$status" >&2
+    cat "$response_file" >&2
+    exit 69
+fi
+
+printf 'Message queued for %s.\n' "$target"
