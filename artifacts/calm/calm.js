@@ -26,6 +26,57 @@
 //     sets hiddenThinkingLabel, so the thinking half of the assistant adapter is
 //     inert by construction.
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Calm also suppresses the per-turn stat rows (duration / token counts / cost),
+// which OMP renders only when display.showTokenUsage is set (display.showTurnTime
+// adds the wall-clock time inside that same row). The user's pre-calm values are
+// saved to a sidecar file so toggling calm off restores them exactly, and so a
+// session that starts with calm already on can still recover the originals.
+const CALM_STATS_PREF = join(
+  dirname(fileURLToPath(import.meta.url)),
+  ".calm-stats-pref.json",
+);
+const CALM_STAT_KEYS = ["display.showTokenUsage", "display.showTurnTime"];
+
+function calmReadSavedStats() {
+  try {
+    return JSON.parse(readFileSync(CALM_STATS_PREF, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function calmSuppressStats(s) {
+  if (!s) return;
+  if (!existsSync(CALM_STATS_PREF)) {
+    const saved = {};
+    for (const key of CALM_STAT_KEYS) saved[key] = s.get(key);
+    try {
+      writeFileSync(CALM_STATS_PREF, JSON.stringify(saved));
+    } catch {
+      // Best-effort: suppression still applies for this session.
+    }
+  }
+  for (const key of CALM_STAT_KEYS) s.set(key, false);
+}
+
+function calmRestoreStats(s) {
+  if (!s) return;
+  const saved = calmReadSavedStats();
+  if (!saved) return;
+  for (const key of CALM_STAT_KEYS) {
+    if (saved[key] !== undefined) s.set(key, saved[key]);
+  }
+  try {
+    writeFileSync(CALM_STATS_PREF, JSON.stringify({}));
+  } catch {
+    // Best-effort.
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Ship animation (ported verbatim from lib/fm-calm-working-ship.ts)
 // ---------------------------------------------------------------------------
@@ -323,6 +374,8 @@ export default function (pi) {
       const next = value === true;
       if (next === calm) return;
       calm = next;
+      if (calm) calmSuppressStats(s);
+      else calmRestoreStats(s);
       applyToolVisibility();
       rebuildTranscript();
       applyWorkingPresentation(ui);
@@ -333,6 +386,8 @@ export default function (pi) {
     const s = settings();
     if (s) s.set("display.hideToolActivity", next);
     calm = next;
+    if (calm) calmSuppressStats(s);
+    else calmRestoreStats(s);
     applyToolVisibility();
     rebuildTranscript();
     applyWorkingPresentation(ui);
@@ -365,6 +420,7 @@ export default function (pi) {
         s.set("display.hideToolActivity", true);
       }
       calm = s.get("display.hideToolActivity") === true;
+      if (calm) calmSuppressStats(s);
     }
     applyToolVisibility();
     try {
