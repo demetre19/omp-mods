@@ -15,8 +15,9 @@ extension, adapted to OMP's extension API and native tool-activity toggle.
 - **Boat widget.** A tiny animated sailboat on a rippling water line appears above the
   editor while a run is active, and disappears when the run settles.
 - **`/calm` command.** Toggles the mode live in both directions.
-- **On by default.** First launch enables it; the preference persists across restarts
-  and OMP updates (it is an extension, not a binary patch).
+- **On by default, every session.** Calm re-enables itself at every session start,
+  so a `/calm` off-toggle never carries into the next session. It is an extension,
+  not a binary patch, so it survives OMP updates.
 - **Ctrl+T unaffected.** The thinking-block toggle stays fully independent.
 
 ## Install
@@ -40,8 +41,9 @@ the same one the built-in Ctrl+Shift+O toggle uses:
 - `TranscriptContainer.setToolActivityVisible(false)` hides every tool-activity
   component, including ones added later in the session.
 - The state is stored in OMP's own `display.hideToolActivity` setting, so `/calm`,
-  Ctrl+Shift+O, and `/settings` all stay in sync. Calm defaults it to `true` only when
-  the setting has never been configured.
+  Ctrl+Shift+O, and `/settings` all stay in sync. Calm sets it to `true` at every
+  `session_start`, so new sessions always begin calm even if a previous session
+  toggled it off.
 - The live interactive-mode context is reached through the TUI component tree (the
   status container exposes it on a public `.mode` field); a zero-height probe widget
   below the editor captures the TUI instance at `session_start`.
