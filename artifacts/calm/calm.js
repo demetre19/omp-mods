@@ -6,7 +6,8 @@
 //   - Hides mid-turn assistant "working notes" (text blocks on messages that ended
 //     in toolUse), keeping only the genuine final reply.
 //   - Shows a small animated boat widget while the agent works.
-//   - /calm toggles; ON by default; preference persists.
+//   - /calm toggles; ON at every session start (a prior off-toggle does not
+//     carry into new sessions).
 //
 // OMP adaptation notes:
 //   - fm-calm hides tool rows by re-registering wrapped copies of Pi's built-in
@@ -415,10 +416,9 @@ export default function (pi) {
     ensureSettingsListener();
     const s = settings();
     if (s) {
-      // Default ON: only when the user has never touched the setting.
-      if (!s.isConfigured("display.hideToolActivity")) {
-        s.set("display.hideToolActivity", true);
-      }
+      // Always start calm: even if a previous session toggled /calm off and
+      // persisted hideToolActivity:false, new sessions default back to ON.
+      s.set("display.hideToolActivity", true);
       calm = s.get("display.hideToolActivity") === true;
       if (calm) calmSuppressStats(s);
     }
