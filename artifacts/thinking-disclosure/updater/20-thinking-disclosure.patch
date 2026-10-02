@@ -1,0 +1,416 @@
+diff --git a/packages/coding-agent/src/config/settings-schema.ts b/packages/coding-agent/src/config/settings-schema.ts
+index 5202909..9f1c725 100644
+--- a/packages/coding-agent/src/config/settings-schema.ts
++++ b/packages/coding-agent/src/config/settings-schema.ts
+@@ -1388,6 +1388,16 @@ export const SETTINGS_SCHEMA = {
+ 			description: "Hide thinking blocks in assistant responses",
+ 		},
+ 	},
++	thinkingDisclosure: {
++		type: "boolean",
++		default: false,
++		ui: {
++			tab: "model",
++			group: "Thinking",
++			label: "Thinking Disclosure Row",
++			description: "Keep hidden thinking available behind a compact Ctrl+T disclosure row",
++		},
++	},
+ 	proseOnlyThinking: {
+ 		type: "boolean",
+ 		default: true,
+diff --git a/packages/coding-agent/src/modes/components/assistant-message.ts b/packages/coding-agent/src/modes/components/assistant-message.ts
+index 59c286c..2f5eb96 100644
+--- a/packages/coding-agent/src/modes/components/assistant-message.ts
++++ b/packages/coding-agent/src/modes/components/assistant-message.ts
+@@ -33,7 +33,10 @@ const EMPTY_STABLE_RENDER: readonly string[] = [];
+ 
+ type ThinkingContentBlock = Extract<AssistantMessage["content"][number], { type: "thinking" }>;
+ type DisplayThinkingContentBlock = ThinkingContentBlock & { rawThinking?: string };
+-type StableThinkingPart = { kind: "thinking"; text: string } | { kind: "spacer" };
++type StableThinkingPart =
++	| { kind: "thinking"; text: string }
++	| { kind: "spacer" }
++	| { kind: "disclosure"; expanded: boolean };
+ 
+ /**
+  * One published prefix of the leading visible-thinking run. Later snapshots
+@@ -53,6 +56,12 @@ function isSnapshotExtension(previous: ThinkingStableSnapshot, current: Thinking
+ 		const after = current.parts[index]!;
+ 		if (before.kind !== after.kind) return false;
+ 		if (before.kind === "spacer" || after.kind === "spacer") continue;
++		if (before.kind === "disclosure" || after.kind === "disclosure") {
++			if (before.kind !== "disclosure" || after.kind !== "disclosure" || before.expanded !== after.expanded) {
++				return false;
++			}
++			continue;
++		}
+ 		const isLast = index === previous.parts.length - 1;
+ 		if (isLast ? !after.text.startsWith(before.text) : after.text !== before.text) return false;
+ 	}
+@@ -232,6 +241,8 @@ export class AssistantMessageComponent extends Container {
+ 	/** Live "thinking" pulse shown in place of a hidden thinking block while it
+ 	 *  streams; undefined when not animating. Driven by {@link #thinkingDotsTimer}. */
+ 	#thinkingDots: Text | undefined;
++	/** Disclosure row rendered before thinking when the opt-in folded presentation is enabled. */
++	#thinkingDisclosureHeader: Text | undefined;
+ 	#thinkingDotsTimer: NodeJS.Timeout | undefined;
+ 	#thinkingDotsFrame = 0;
+ 	/** Previous cumulative provider token count + timestamp, for deriving this
+@@ -266,6 +277,7 @@ export class AssistantMessageComponent extends Container {
+ 		private readonly thinkingRenderers: readonly AssistantThinkingRenderer[] = [],
+ 		private readonly imageBudget?: ImageBudget,
+ 		private proseOnlyThinking = true,
++		private thinkingDisclosure = false,
+ 	) {
+ 		super();
+ 		this.#transcriptBlockFinalized = message !== undefined;
+@@ -312,13 +324,21 @@ export class AssistantMessageComponent extends Container {
+ 	}
+ 
+ 	setHideThinkingBlock(hide: boolean): void {
++		if (this.hideThinkingBlock === hide) return;
+ 		this.hideThinkingBlock = hide;
++		if (this.#lastMessage) this.updateContent(this.#lastMessage, { transient: this.#lastUpdateTransient });
+ 	}
+ 
+ 	setProseOnlyThinking(proseOnly: boolean): void {
+ 		this.proseOnlyThinking = proseOnly;
+ 	}
+ 
++	setThinkingDisclosure(enabled: boolean): void {
++		if (this.thinkingDisclosure === enabled) return;
++		this.thinkingDisclosure = enabled;
++		if (this.#lastMessage) this.updateContent(this.#lastMessage, { transient: this.#lastUpdateTransient });
++	}
++
+ 	override dispose(): void {
+ 		this.#stopThinkingAnimation();
+ 		super.dispose();
+@@ -343,10 +363,17 @@ export class AssistantMessageComponent extends Container {
+ 		return tail === "thinking";
+ 	}
+ 
++	#thinkingDisclosureLabel(expanded: boolean): string {
++		const glyph = theme.fg("thinkingText", expanded ? "▾" : "▸");
++		const action = expanded ? "collapse" : "expand";
++		return `${glyph}${theme.fg("muted", ` Thinking · Ctrl+T to ${action}`)}`;
++	}
++
+ 	#thinkingDotsLabel(): string {
+ 		const glyph = THINKING_DOTS_FRAMES[this.#thinkingDotsFrame % THINKING_DOTS_FRAMES.length] ?? "…";
+ 		const coloredGlyph = theme.fg("thinkingText", glyph);
+-		const thinkingLabel = theme.fg("muted", " Thinking");
++		const label = this.thinkingDisclosure ? " Thinking · Ctrl+T to expand" : " Thinking";
++		const thinkingLabel = theme.fg("muted", label);
+ 		const rate = Math.min(SPEED_MAX, sharedSpeedTracker.getSpeed());
+ 		// The numeric badge ("<total> · <rate> toks/s") only renders while this block
+ 		// is genuinely streaming provider tokens. A block that has observed no token
+@@ -525,6 +552,10 @@ export class AssistantMessageComponent extends Container {
+ 		const parts: StableThinkingPart[] = [];
+ 		let itemIndex = 0;
+ 		for (const child of this.#contentContainer.children) {
++			if (child === this.#thinkingDisclosureHeader) {
++				parts.push({ kind: "disclosure", expanded: true });
++				continue;
++			}
+ 			const item = items[itemIndex];
+ 			if (item?.md === child) {
+ 				// Text blocks never publish: their deltas can revise earlier rows.
+@@ -563,6 +594,10 @@ export class AssistantMessageComponent extends Container {
+ 				rows.push("");
+ 				continue;
+ 			}
++			if (part.kind === "disclosure") {
++				rows.push(...new Text(this.#thinkingDisclosureLabel(part.expanded), 1, 0).render(width));
++				continue;
++			}
+ 			// Constructor args mirror the live thinking Markdown exactly so these
+ 			// rows are byte-identical to the block render's prefix.
+ 			const markdown = new Markdown(part.text, 1, 0, getMarkdownTheme(), {
+@@ -771,7 +806,9 @@ export class AssistantMessageComponent extends Container {
+ 	}
+ 
+ 	#computeShapeKey(message: AssistantMessage): string {
+-		const parts: string[] = [`htb:${this.hideThinkingBlock ? 1 : 0}|pot:${this.proseOnlyThinking ? 1 : 0}`];
++		const parts: string[] = [
++			`htb:${this.hideThinkingBlock ? 1 : 0}|td:${this.thinkingDisclosure ? 1 : 0}|pot:${this.proseOnlyThinking ? 1 : 0}`,
++		];
+ 		for (const content of message.content) {
+ 			if (content.type === "text") {
+ 				parts.push(canonicalizeMessage(content.text) ? "T1" : "T0");
+@@ -921,6 +958,7 @@ export class AssistantMessageComponent extends Container {
+ 		this.#contentContainer.clear();
+ 		this.#emergencyText = undefined;
+ 		this.#thinkingDots = undefined;
++		this.#thinkingDisclosureHeader = undefined;
+ 		this.#hasTruncatableError = false;
+ 
+ 		// Determine if we should capture Markdown instances for next fast path
+@@ -929,18 +967,26 @@ export class AssistantMessageComponent extends Container {
+ 			| Array<{ md: Markdown; contentIndex: number; blockType: "text" | "thinking"; lastText: string }>
+ 			| undefined = shouldCapture ? [] : undefined;
+ 
+-		const hasVisibleContent = message.content.some(
+-			c =>
+-				(c.type === "text" && canonicalizeMessage(c.text)) ||
+-				(c.type === "image" && c.data && c.mimeType) ||
+-				(!this.hideThinkingBlock &&
+-					c.type === "thinking" &&
+-					resolveThinkingDisplay(c, this.proseOnlyThinking).visible),
++		const hasDisplayableThinking = message.content.some(
++			c => c.type === "thinking" && resolveThinkingDisplay(c, this.proseOnlyThinking).visible,
+ 		);
++		const animateThinking = this.#shouldAnimateThinking(message);
++		const showThinkingDisclosure = this.thinkingDisclosure && hasDisplayableThinking && !animateThinking;
++		const hasVisibleContent =
++			showThinkingDisclosure ||
++			message.content.some(
++				c =>
++					(c.type === "text" && canonicalizeMessage(c.text)) ||
++					(c.type === "image" && c.data && c.mimeType) ||
++					(!this.hideThinkingBlock &&
++						c.type === "thinking" &&
++						resolveThinkingDisplay(c, this.proseOnlyThinking).visible),
++			);
+ 
+ 		// Render content in order
+ 		let thinkingIndex = 0;
+ 		let hasRenderedContent = false;
++		let thinkingDisclosureRendered = false;
+ 		for (let i = 0; i < message.content.length; i++) {
+ 			const content = message.content[i];
+ 			if (content.type === "text" && canonicalizeMessage(content.text)) {
+@@ -954,20 +1000,31 @@ export class AssistantMessageComponent extends Container {
+ 				hasRenderedContent = true;
+ 			} else if (content.type === "thinking" && resolveThinkingDisplay(content, this.proseOnlyThinking).visible) {
+ 				const thinkingText = resolveThinkingDisplay(content, this.proseOnlyThinking).text;
+-				if (this.hideThinkingBlock) {
+-					thinkingIndex += 1;
+-					continue;
+-				}
+-				// Add spacing only when another visible assistant content block follows.
+-				// This avoids a superfluous blank line before separately-rendered tool execution blocks.
+ 				const hasVisibleContentAfter = message.content
+ 					.slice(i + 1)
+ 					.some(
+ 						c =>
+ 							(c.type === "text" && canonicalizeMessage(c.text)) ||
+ 							(c.type === "image" && c.data && c.mimeType) ||
+-							(c.type === "thinking" && resolveThinkingDisplay(c, this.proseOnlyThinking).visible),
++							(!this.hideThinkingBlock &&
++								c.type === "thinking" &&
++								resolveThinkingDisplay(c, this.proseOnlyThinking).visible),
+ 					);
++				let insertedDisclosure = false;
++				if (showThinkingDisclosure && !thinkingDisclosureRendered) {
++					if (hasRenderedContent) this.#contentContainer.addChild(new Spacer(1));
++					this.#thinkingDisclosureHeader = new Text(this.#thinkingDisclosureLabel(!this.hideThinkingBlock), 1, 0);
++					this.#contentContainer.addChild(this.#thinkingDisclosureHeader);
++					thinkingDisclosureRendered = true;
++					insertedDisclosure = true;
++					hasRenderedContent = true;
++					if (!this.hideThinkingBlock) this.#contentContainer.addChild(new Spacer(1));
++				}
++				if (this.hideThinkingBlock) {
++					thinkingIndex += 1;
++					if (insertedDisclosure && hasVisibleContentAfter) this.#contentContainer.addChild(new Spacer(1));
++					continue;
++				}
+ 
+ 				// Thinking traces in thinkingText color, italic
+ 				const md = new Markdown(thinkingText, 1, 0, getMarkdownTheme(), {
+@@ -989,7 +1046,7 @@ export class AssistantMessageComponent extends Container {
+ 			}
+ 		}
+ 
+-		if (this.#shouldAnimateThinking(message)) {
++		if (animateThinking) {
+ 			if (hasVisibleContent) this.#contentContainer.addChild(new Spacer(1));
+ 			this.#thinkingDots = new Text(this.#thinkingDotsLabel(), 1, 0);
+ 			this.#contentContainer.addChild(this.#thinkingDots);
+diff --git a/packages/coding-agent/src/modes/components/chat-transcript-builder.ts b/packages/coding-agent/src/modes/components/chat-transcript-builder.ts
+index 55265d5..ce53e80 100644
+--- a/packages/coding-agent/src/modes/components/chat-transcript-builder.ts
++++ b/packages/coding-agent/src/modes/components/chat-transcript-builder.ts
+@@ -360,6 +360,7 @@ export class ChatTranscriptBuilder {
+ 			this.deps.getMessageRenderer ? undefined : [], // placeholder for thinkingRenderers
+ 			this.deps.ui.imageBudget,
+ 			proseOnlyThinking,
++			settings.get("thinkingDisclosure"),
+ 		);
+ 		assistantComponent.setImagesVisible(settings.get("terminal.showImages"));
+ 		assistantComponent.setToolResultImagesVisible(!settings.get("display.hideToolActivity"));
+@@ -393,6 +394,7 @@ export class ChatTranscriptBuilder {
+ 				this.deps.getMessageRenderer ? undefined : [],
+ 				undefined,
+ 				proseOnlyThinking,
++				settings.get("thinkingDisclosure"),
+ 			);
+ 			component.setImagesVisible(settings.get("terminal.showImages"));
+ 			component.setToolResultImagesVisible(!settings.get("display.hideToolActivity"));
+diff --git a/packages/coding-agent/src/modes/controllers/selector-controller.ts b/packages/coding-agent/src/modes/controllers/selector-controller.ts
+index 037584d..d984abc 100644
+--- a/packages/coding-agent/src/modes/controllers/selector-controller.ts
++++ b/packages/coding-agent/src/modes/controllers/selector-controller.ts
+@@ -579,6 +579,15 @@ export class SelectorController {
+ 				}
+ 				this.ctx.ui.requestRender(true);
+ 				break;
++			case "thinkingDisclosure": {
++				const enabled = value as boolean;
++				for (const child of this.ctx.chatContainer.children) {
++					if (child instanceof AssistantMessageComponent) child.setThinkingDisclosure(enabled);
++				}
++				if (this.ctx.streamingComponent) this.ctx.streamingComponent.setThinkingDisclosure(enabled);
++				this.ctx.ui.requestRender(true);
++				break;
++			}
+ 			case "proseOnlyThinking":
+ 				this.ctx.proseOnlyThinking = value as boolean;
+ 				for (const child of this.ctx.chatContainer.children) {
+diff --git a/packages/coding-agent/src/modes/utils/interactive-context-helpers.ts b/packages/coding-agent/src/modes/utils/interactive-context-helpers.ts
+index 87e86bb..6cccba0 100644
+--- a/packages/coding-agent/src/modes/utils/interactive-context-helpers.ts
++++ b/packages/coding-agent/src/modes/utils/interactive-context-helpers.ts
+@@ -23,6 +23,7 @@ export function createAssistantMessageComponent(
+ 		ctx.viewSession.extensionRunner?.getAssistantThinkingRenderers(),
+ 		ctx.ui.imageBudget,
+ 		ctx.proseOnlyThinking,
++		ctx.settings.get("thinkingDisclosure"),
+ 	);
+ 	component.setImagesVisible(ctx.settings.get("terminal.showImages"));
+ 	component.setToolResultImagesVisible(!ctx.hideToolActivity);
+diff --git a/packages/coding-agent/test/modes/components/assistant-message-error.test.ts b/packages/coding-agent/test/modes/components/assistant-message-error.test.ts
+index 32820e5..f46d463 100644
+--- a/packages/coding-agent/test/modes/components/assistant-message-error.test.ts
++++ b/packages/coding-agent/test/modes/components/assistant-message-error.test.ts
+@@ -33,8 +33,16 @@ function erroredMessage(errorMessage: string): AssistantMessage {
+ 	};
+ }
+ 
+-function renderLines(message: AssistantMessage, hideThinkingBlock = false): string[] {
+-	const component = new AssistantMessageComponent(message, hideThinkingBlock);
++function renderLines(message: AssistantMessage, hideThinkingBlock = false, thinkingDisclosure = false): string[] {
++	const component = new AssistantMessageComponent(
++		message,
++		hideThinkingBlock,
++		undefined,
++		[],
++		undefined,
++		true,
++		thinkingDisclosure,
++	);
+ 	return Bun.stripANSI(component.render(RENDER_WIDTH).join("\n"))
+ 		.split("\n")
+ 		.map(line => line.trimEnd());
+@@ -140,6 +148,31 @@ describe("AssistantMessageComponent hidden thinking rendering", () => {
+ 		const lines = renderLines(thinkingMessage());
+ 		expect(lines.some(line => line.includes("private reasoning"))).toBe(true);
+ 	});
++
++	it("keeps hidden thinking available behind a collapsed disclosure row", () => {
++		const lines = renderLines(thinkingMessage(), true, true);
++		expect(lines.some(line => line.includes("▸ Thinking · Ctrl+T to expand"))).toBe(true);
++		expect(lines.some(line => line.includes("private reasoning"))).toBe(false);
++		expect(lines.some(line => line.includes("Visible answer"))).toBe(true);
++	});
++
++	it("labels visible thinking as expanded when disclosure mode is enabled", () => {
++		const lines = renderLines(thinkingMessage(), false, true);
++		expect(lines.some(line => line.includes("▾ Thinking · Ctrl+T to collapse"))).toBe(true);
++		expect(lines.some(line => line.includes("private reasoning"))).toBe(true);
++	});
++
++	it("re-renders the disclosure when thinking visibility changes", () => {
++		const component = new AssistantMessageComponent(thinkingMessage(), true, undefined, [], undefined, true, true);
++		const rendered = () => Bun.stripANSI(component.render(RENDER_WIDTH).join("\n"));
++
++		expect(rendered()).toContain("▸ Thinking · Ctrl+T to expand");
++		expect(rendered()).not.toContain("private reasoning");
++
++		component.setHideThinkingBlock(false);
++		expect(rendered()).toContain("▾ Thinking · Ctrl+T to collapse");
++		expect(rendered()).toContain("private reasoning");
++	});
+ });
+ 
+ describe("AssistantMessageComponent streaming thinking pulse", () => {
+@@ -166,8 +199,16 @@ describe("AssistantMessageComponent streaming thinking pulse", () => {
+ 		};
+ 	}
+ 
+-	function liveLines(message: AssistantMessage, hideThinkingBlock = true): string[] {
+-		const component = new AssistantMessageComponent(undefined, hideThinkingBlock);
++	function liveLines(message: AssistantMessage, hideThinkingBlock = true, thinkingDisclosure = false): string[] {
++		const component = new AssistantMessageComponent(
++			undefined,
++			hideThinkingBlock,
++			undefined,
++			[],
++			undefined,
++			true,
++			thinkingDisclosure,
++		);
+ 		component.updateContent(message);
+ 		const lines = Bun.stripANSI(component.render(RENDER_WIDTH).join("\n"))
+ 			.split("\n")
+@@ -188,6 +229,12 @@ describe("AssistantMessageComponent streaming thinking pulse", () => {
+ 		expect(lines.some(line => line.includes("private reasoning"))).toBe(false);
+ 	});
+ 
++	it("adds the expand hint to the compact streaming pulse in disclosure mode", () => {
++		const lines = liveLines(streaming([{ type: "thinking", thinking: "private reasoning" }]), true, true);
++		expect(lines.some(line => line.includes(PULSE) && line.includes("Ctrl+T to expand"))).toBe(true);
++		expect(lines.some(line => line.includes("private reasoning"))).toBe(false);
++	});
++
+ 	it("drops the pulse once visible text starts streaming", () => {
+ 		const lines = liveLines(
+ 			streaming([
+diff --git a/packages/coding-agent/test/modes/components/assistant-message-mermaid.test.ts b/packages/coding-agent/test/modes/components/assistant-message-mermaid.test.ts
+index acf5299..4c4079a 100644
+--- a/packages/coding-agent/test/modes/components/assistant-message-mermaid.test.ts
++++ b/packages/coding-agent/test/modes/components/assistant-message-mermaid.test.ts
+@@ -125,6 +125,41 @@ describe("AssistantMessageComponent transcript lifecycle", () => {
+ 		expect(flushText).toContain("Newer tail");
+ 	});
+ 
++	it("retires an expanded disclosure header with the frozen thinking prefix", () => {
++		const thinkingMessage = (thinking: string): AssistantMessage => ({
++			...createAssistantMessage(""),
++			content: [{ type: "thinking", thinking }],
++		});
++		const component = new AssistantMessageComponent(undefined, false, undefined, [], undefined, true, true);
++		const transcript = new TranscriptContainer();
++		transcript.addChild(component);
++
++		component.updateContent(
++			thinkingMessage("Alpha reasoning paragraph.\n\nBeta reasoning paragraph.\n\nPartial tail"),
++			{ transient: true },
++		);
++		transcript.renderViewport(80, 20, { now: 0, tick: 0 });
++		component.updateContent(
++			thinkingMessage(
++				"Alpha reasoning paragraph.\n\nBeta reasoning paragraph.\n\nPartial tail keeps growing.\n\nNewer tail",
++			),
++			{ transient: true },
++		);
++		transcript.renderViewport(80, 20, { now: 1, tick: 1 });
++
++		const first = transcript.peekFinalizedBatch(80, 0);
++		expect(first).toBeDefined();
++		const firstText = Bun.stripANSI(first!.rows.join("\n"));
++		expect(firstText).toContain("▾ Thinking · Ctrl+T to collapse");
++		expect(firstText).toContain("Alpha reasoning paragraph.");
++		transcript.acknowledgeFinalizedBatch(first!.id);
++
++		component.markTranscriptBlockFinalized();
++		const flushText = Bun.stripANSI(transcript.peekFlushBatch(80)?.rows.join("\n") ?? "");
++		expect(flushText).not.toContain("▾ Thinking · Ctrl+T to collapse");
++		expect(flushText).toContain("Newer tail");
++	});
++
+ 	it("appends a late cache-miss marker after assistant output", () => {
+ 		const component = new AssistantMessageComponent();
+ 		component.updateContent(

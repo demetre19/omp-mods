@@ -1,0 +1,77 @@
+diff --git a/packages/coding-agent/src/slash-commands/builtin-modes.ts b/packages/coding-agent/src/slash-commands/builtin-modes.ts
+index 5687dfe..1362030 100644
+--- a/packages/coding-agent/src/slash-commands/builtin-modes.ts
++++ b/packages/coding-agent/src/slash-commands/builtin-modes.ts
+@@ -80,6 +80,10 @@ function applyExtendedContextCommand(settings: Settings, args: string): string |
+ 	return undefined;
+ }
+ 
++const DEVIN_DEEP_PLAN_GUIDANCE =
++	"Before writing or proposing a plan, ask at least one material clarifying question and wait for the user's answer. " +
++	"After clarification, investigate the codebase thoroughly and produce a detailed implementation plan with alternatives, risks, ordering, rollback, and verification.";
++
+ /** Detailed, session-effective `/computer status` diagnostics. */
+ async function formatComputerUseStatus(session: AgentSession): Promise<string> {
+ 	const enabled = session.settings.get("computer.enabled");
+@@ -245,6 +249,26 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
+ 			);
+ 		},
+ 	},
++	{
++		name: "devin-plan",
++		aliases: ["megaplan", "ultraplan", "masterplan"],
++		icon: "plan",
++		description: "Start a thorough Devin-backed plan with required clarification",
++		inlineHint: "<prompt>",
++		allowArgs: true,
++		handleTui: async (command, runtime) => {
++			const prompt = command.args.trim();
++			if (!prompt) {
++				runtime.ctx.showWarning("Usage: /devin-plan <prompt>");
++				runtime.ctx.editor.setText("/devin-plan ");
++				return;
++			}
++			const guidedPrompt = `${prompt}\n\n${DEVIN_DEEP_PLAN_GUIDANCE}`;
++			await runWithDetachedModeDraft(command, runtime, () =>
++				runtime.ctx.handlePlanModeCommand(guidedPrompt, runtime.input),
++			);
++		},
++	},
+ 	{
+ 		name: "plan-review",
+ 		icon: "plan",
+diff --git a/packages/coding-agent/test/slash-commands/mode-attachments.test.ts b/packages/coding-agent/test/slash-commands/mode-attachments.test.ts
+index e9236ac..3594b80 100644
+--- a/packages/coding-agent/test/slash-commands/mode-attachments.test.ts
++++ b/packages/coding-agent/test/slash-commands/mode-attachments.test.ts
+@@ -99,6 +99,30 @@ describe("mode command attachments", () => {
+ 		expect(harness.editor.pendingImageLinks).toEqual([]);
+ 	});
+ 
++	it.each(["/devin-plan", "/megaplan", "/ultraplan", "/masterplan"])(
++		"%s enters plan mode with the deep-planning clarification contract",
++		async command => {
++			const harness = createHarness({});
++
++			await harness.editor.onSubmit?.(`${command} redesign authentication`);
++
++			expect(harness.handlePlanModeCommand).toHaveBeenCalledTimes(1);
++			const prompt = harness.handlePlanModeCommand.mock.calls[0]?.[0];
++			expect(prompt).toContain("redesign authentication");
++			expect(prompt).toContain("ask at least one material clarifying question");
++			expect(prompt).toContain("wait for the user's answer");
++		},
++	);
++
++	it("restores an empty /devin-plan command so the user can add a prompt", async () => {
++		const harness = createHarness({});
++
++		await harness.editor.onSubmit?.("/devin-plan");
++
++		expect(harness.handlePlanModeCommand).not.toHaveBeenCalled();
++		expect(harness.editor.getText()).toBe("/devin-plan ");
++	});
++
+ 	it("does not submit images removed by an extension", async () => {
+ 		const harness = createHarness({ images: [] });
+ 

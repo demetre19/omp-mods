@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+root=${OMP_DURABLE_ROOT:-"$HOME/.local/libexec/omp-devin"}
+
+if [ "${1-}" = "update" ]; then
+  shift
+  exec "$root/updater/update-with-customizations.sh" "$@"
+fi
+
+exec "$root/current/omp" "$@"
