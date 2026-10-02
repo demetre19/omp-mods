@@ -42,10 +42,14 @@
 // double-render the row.
 //
 // Install: copy this file to ~/.omp/agent/extensions/ and restart OMP.
-//          Installing alone turns it on: at every session start it writes
-//          hideThinkingBlock=true and shows a muted `▸ Thinking · Ctrl+T to
-//          expand` row for hidden reasoning. /thinking-disclosure toggles the
-//          row off and persists via the settings store; Ctrl+T still expands.
+//          Installing alone hides thinking: at every session start it writes
+//          hideThinkingBlock=true, and hidden reasoning leaves NO trace —
+//          the `▸ Thinking · Ctrl+T to expand` row is opt-in only.
+//          /thinking-disclosure opts into the row and persists via the
+//          settings store; Ctrl+T always expands regardless.
+//          The persisted off state applies on every surface — including
+//          UI-less ones like `omp render` — because the row check re-reads
+//          the setting instead of relying on module-init state.
 
 const TD_PATCH = Symbol.for("omp:thinking-disclosure:v1");
 const TD_SETTING_ID = "thinkingDisclosure";
@@ -213,11 +217,11 @@ function installDisclosurePatch(pi, hooks) {
 
 export default function (pi) {
   const settings = () => pi.pi?.settings;
-  // Default ON: a fresh install hides thinking blocks automatically at session
-  // start (the extension writes hideThinkingBlock itself) and leaves a muted
-  // `▸ Thinking · Ctrl+T to expand` row; /thinking-disclosure toggles the row
-  // off again and persists the choice via the settings store.
-  let on = tdGet(settings(), TD_SETTING_ID, true);
+  // Default OFF: installing the extension hides thinking at every session
+  // start (it writes hideThinkingBlock itself) and hidden reasoning leaves
+  // no trace at all. /thinking-disclosure opts into a muted
+  // `▸ Thinking · Ctrl+T to expand` row and persists the choice.
+  let on = tdGet(settings(), TD_SETTING_ID, false);
   let tui = null;
   let mode = null;
 
@@ -270,6 +274,11 @@ export default function (pi) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
+    // Re-resolve the persisted flag for every surface. Module init can run
+    // before pi.pi.settings exists, and UI-less sessions (omp render) bail
+    // at hasUI below — refreshing here keeps `on` honest for both.
+    const s = settings();
+    on = tdGet(s, TD_SETTING_ID, on);
     if (!ctx.hasUI) return;
     // Probe widget: invisible, below the editor, captures the live TUI object
     // so we can reach InteractiveMode.hideThinkingBlock (same trick as calm).
@@ -280,17 +289,17 @@ export default function (pi) {
         const m = findMode();
         // Probe may connect after session_start's enforcement ran with no
         // mode; apply the hidden flag here too so ordering is race-free.
-        if (m && on) m.hideThinkingBlock = true;
+        // Hide enforcement is unconditional — it is the extension's purpose,
+        // independent of the opt-in disclosure row.
+        if (m) m.hideThinkingBlock = true;
         return { render: () => [], invalidate: () => {}, dispose: () => {} };
       },
       { placement: "belowEditor" },
     );
-    const s = settings();
-    on = tdGet(s, TD_SETTING_ID, true);
     // Enforce hidden-by-default at every session start (like calm does for
     // tool activity): installing the extension alone hides thinking — the
     // user never needs hideThinkingBlock in config. Ctrl+T still expands.
-    if (s && on) {
+    if (s) {
       tdSet(s, "hideThinkingBlock", true);
       const m = findMode();
       if (m) m.hideThinkingBlock = true;
@@ -302,7 +311,13 @@ export default function (pi) {
 
   function installSafely() {
     try {
-      installDisclosurePatch(pi, { isOn: () => on, globalHide });
+      // isOn re-reads the persisted setting per row: it is live for the
+      // toggle AND correct on UI-less surfaces where session_start never
+      // refreshed `on`.
+      installDisclosurePatch(pi, {
+        isOn: () => tdGet(settings(), TD_SETTING_ID, on),
+        globalHide,
+      });
       return { ok: true };
     } catch (error) {
       return { ok: false, error };
