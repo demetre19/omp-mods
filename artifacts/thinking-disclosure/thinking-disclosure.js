@@ -42,10 +42,10 @@
 // double-render the row.
 //
 // Install: copy this file to ~/.omp/agent/extensions/ and restart OMP.
-//          With `hideThinkingBlock` on, hidden thinking leaves a muted
-//          `▸ Thinking · Ctrl+T to expand` row instead of deleting the
-//          reasoning. Defaults OFF (row suppressed, all hidden like stock);
-//          /thinking-disclosure toggles and persists to the settings store.
+//          Installing alone turns it on: at every session start it writes
+//          hideThinkingBlock=true and shows a muted `▸ Thinking · Ctrl+T to
+//          expand` row for hidden reasoning. /thinking-disclosure toggles the
+//          row off and persists via the settings store; Ctrl+T still expands.
 
 const TD_PATCH = Symbol.for("omp:thinking-disclosure:v1");
 const TD_SETTING_ID = "thinkingDisclosure";
@@ -213,11 +213,11 @@ function installDisclosurePatch(pi, hooks) {
 
 export default function (pi) {
   const settings = () => pi.pi?.settings;
-  // Default OFF: a fresh install with no `thinkingDisclosure` key hides hidden
-  // thinking completely (the pre-mod behavior). /thinking-disclosure writes the
-  // flag via the settings store, so off is also what a user who toggles it off
-  // once sees forever.
-  let on = tdGet(settings(), TD_SETTING_ID, false);
+  // Default ON: a fresh install hides thinking blocks automatically at session
+  // start (the extension writes hideThinkingBlock itself) and leaves a muted
+  // `▸ Thinking · Ctrl+T to expand` row; /thinking-disclosure toggles the row
+  // off again and persists the choice via the settings store.
+  let on = tdGet(settings(), TD_SETTING_ID, true);
   let tui = null;
   let mode = null;
 
@@ -277,13 +277,25 @@ export default function (pi) {
       "td-probe",
       (t) => {
         tui = t;
-        findMode();
+        const m = findMode();
+        // Probe may connect after session_start's enforcement ran with no
+        // mode; apply the hidden flag here too so ordering is race-free.
+        if (m && on) m.hideThinkingBlock = true;
         return { render: () => [], invalidate: () => {}, dispose: () => {} };
       },
       { placement: "belowEditor" },
     );
     const s = settings();
-    on = tdGet(s, TD_SETTING_ID, false);
+    on = tdGet(s, TD_SETTING_ID, true);
+    // Enforce hidden-by-default at every session start (like calm does for
+    // tool activity): installing the extension alone hides thinking — the
+    // user never needs hideThinkingBlock in config. Ctrl+T still expands.
+    if (s && on) {
+      tdSet(s, "hideThinkingBlock", true);
+      const m = findMode();
+      if (m) m.hideThinkingBlock = true;
+      tdCommit(s);
+    }
     const installed = installSafely();
     if (!installed.ok) ctx.ui.notify(`Thinking disclosure unavailable (${installed.error})`, "warning");
   });

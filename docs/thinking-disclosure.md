@@ -17,10 +17,11 @@ Two install paths exist:
   collapsed-row presentation at render time by wrapping
   `AssistantMessageComponent.prototype` (`updateContent` marks thinking
   content, `render` appends the label row while hidden, `setHideThinkingBlock`
-  tracks the toggle). No rebuild, survives `omp update`, toggles live with
-  `/thinking-disclosure`, and persists `thinkingDisclosure` through OMP's own
-  settings store. Defaults OFF (hidden thinking is fully hidden, matching the
-  pre-mod behavior) — one `/thinking-disclosure` enables the row forever.
+  tracks the toggle). No rebuild, survives `omp update`. Defaults ON: at every
+  session start it also writes `hideThinkingBlock: true`, so installing the
+  file alone hides thinking automatically — no config step. `/thinking-disclosure`
+  toggles the row off and persists; Ctrl+T still expands. Persists
+  `thinkingDisclosure` through OMP's own settings store.
   Verified against **18.4.10**. Limitations vs the binary patch:
   the row is appended to the component's rendered rows, so it appears after
   the turn's visible content rather than at the block's original position;
