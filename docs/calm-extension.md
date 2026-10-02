@@ -66,9 +66,17 @@ the same one the built-in Ctrl+Shift+O toggle uses:
 
 ## Compatibility
 
-Verified against OMP **v18.1.21** (Bun-compiled binary). The extension uses only
-public extension API surface (`pi.on`, `pi.registerCommand`, `ctx.ui.setWidget`,
-`pi.pi.settings`, `pi.pi` component classes) plus two stable internals:
+Verified against OMP **v18.4.8** (Bun-compiled binary), including the 18.3
+settings migration: OMP 18.3 replaced the path-string Settings API with a
+reactive registry, so calm now writes `display.hideToolActivity` and the
+per-turn stat prefs through `settings.writeValue` using minimal duck-typed
+Setting descriptors, and observes external changes by polling
+`ctx.hideToolActivity`. Older OMP releases still work — the code probes for
+`writeValue` and falls back to the legacy `settings.set` path.
+
+Otherwise the extension uses only public extension API surface (`pi.on`,
+`pi.registerCommand`, `ctx.ui.setWidget`, `pi.pi.settings`, `pi.pi` component
+classes) plus two stable internals:
 `AssistantMessageComponent.prototype.updateContent` and the status container's
 `.mode` field. If a future OMP release renames either, the assistant-note filter
 degrades gracefully (a warning is shown, tool hiding still works).

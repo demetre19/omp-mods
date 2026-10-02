@@ -19,6 +19,17 @@
 //   - The live InteractiveMode context is reached through the TUI component tree:
 //     the status container stores it on a public `.mode` field. A zero-height
 //     probe widget below the editor captures the TUI instance at session_start.
+//   - OMP 18.3 replaced the path-string Settings API (settings.get/set/
+//     onEffectiveChange) with a reactive graph: Settings registry methods take
+//     Setting objects, and observers subscribe via Setting.sources + slot ids.
+//     Setting objects are NOT exported on pi.pi, so calm constructs minimal
+//     Setting-compatible descriptors (id/segments/slot/definition/get/
+//     assertWritable) — the registry only duck-types those members — and calls
+//     settings.writeValue(st, v, "global") which persists exactly like the old
+//     set(). External changes are observed by polling ctx.hideToolActivity (the
+//     live InteractiveMode flag, kept in sync by OMP's own settings sweep)
+//     instead of onEffectiveChange; after each write we flush()+reloadFromDisk()
+//     so the native propagation sweep re-syncs FS stat flags and ctx fields.
 //   - fm-calm's operational-input classifier and synthetic-user layout depend on
 //     firstmate's supervisor shell script and are not ported.
 //   - OMP has no setWorkingVisible(), so the stock "Working…" row stays visible
@@ -26,6 +37,7 @@
 //   - The thinking toggle (hideThinkingBlock / Ctrl+T) is untouched: OMP never
 //     sets hiddenThinkingLabel, so the thinking half of the assistant adapter is
 //     inert by construction.
+
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -40,7 +52,106 @@ const CALM_STATS_PREF = join(
   dirname(fileURLToPath(import.meta.url)),
   ".calm-stats-pref.json",
 );
-const CALM_STAT_KEYS = ["display.showTokenUsage", "display.showTurnTime"];
+const CALM_STAT_IDS = ["display.showTokenUsage", "display.showTurnTime"];
+const CALM_HIDE_TOOL_ID = "display.hideToolActivity";
+
+// --- 18.3+ settings port ---------------------------------------------------
+// Lt (the new Settings registry) duck-types Setting objects; only these members
+// are consumed: .id, .segments, .slot, .definition, .get(s), .assertWritable(v).
+// Slots must not collide with real Setting slots (assigned 0..N at startup), so
+// ours live far above the range — a collision would hijack another setting's
+// effective-change listeners.
+let calmFakeSlot = 0x7fff0000;
+const calmSettingsCache = new Map();
+
+function calmSetting(id, def) {
+  let st = calmSettingsCache.get(id);
+  if (st) return st;
+  st = {
+    id,
+    segments: id.split("."),
+    slot: calmFakeSlot++,
+    definition: { id, type: "boolean", default: def },
+    get(s) {
+      const v = s.rawValue(st);
+      return v === undefined ? def : v;
+    },
+    assertWritable(v) {
+      if (typeof v !== "boolean")
+        throw new Error(`Invalid value for ${id}: expected a boolean`);
+    },
+    set(s, v) {
+      s.writeValue(st, v, "global");
+    },
+    unset(s) {
+      s.unsetGlobalValue(st);
+    },
+  };
+  calmSettingsCache.set(id, st);
+  return st;
+}
+
+function calmSupportsNewApi(s) {
+  return (
+    s &&
+    typeof s.rawValue === "function" &&
+    typeof s.writeValue === "function" &&
+    typeof s.get !== "function"
+  );
+}
+
+function calmGet(s, id, def = false) {
+  if (!s) return def;
+  if (calmSupportsNewApi(s)) {
+    try {
+      return calmSetting(id, def).get(s) === true;
+    } catch {
+      return def;
+    }
+  }
+  if (typeof s.get === "function") {
+    try {
+      const v = s.get(id);
+      return v === undefined ? def : v === true;
+    } catch {
+      return def;
+    }
+  }
+  return def;
+}
+
+function calmSet(s, id, v) {
+  if (!s) return false;
+  if (calmSupportsNewApi(s)) {
+    try {
+      calmSetting(id, false).set(s, v);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (typeof s.set === "function") {
+    try {
+      s.set(id, v);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+// Persist + propagate: writeValue schedules the save; flush lands it on disk;
+// reloadFromDisk re-derives every real Setting, which fires the native sweep
+// (FS stat flags, ctx.hideToolActivity resync, transcript rebuild). Fire-and-
+// forget: callers always drive ctx fields themselves as an immediate fallback.
+function calmCommit(s) {
+  if (!s || typeof s.flush !== "function") return;
+  Promise.resolve(s.flush())
+    .then(() => s.reloadFromDisk?.())
+    .catch(() => {});
+}
+// ---------------------------------------------------------------------------
 
 function calmReadSavedStats() {
   try {
@@ -54,23 +165,31 @@ function calmSuppressStats(s) {
   if (!s) return;
   if (!existsSync(CALM_STATS_PREF)) {
     const saved = {};
-    for (const key of CALM_STAT_KEYS) saved[key] = s.get(key);
+    for (const id of CALM_STAT_IDS) saved[id] = calmGet(s, id);
     try {
       writeFileSync(CALM_STATS_PREF, JSON.stringify(saved));
     } catch {
       // Best-effort: suppression still applies for this session.
     }
   }
-  for (const key of CALM_STAT_KEYS) s.set(key, false);
+  let changed = false;
+  for (const id of CALM_STAT_IDS) {
+    if (calmGet(s, id) !== false) changed = calmSet(s, id, false) || changed;
+  }
+  if (changed) calmCommit(s);
 }
 
 function calmRestoreStats(s) {
   if (!s) return;
   const saved = calmReadSavedStats();
   if (!saved) return;
-  for (const key of CALM_STAT_KEYS) {
-    if (saved[key] !== undefined) s.set(key, saved[key]);
+  let changed = false;
+  for (const id of CALM_STAT_IDS) {
+    if (saved[id] !== undefined && calmGet(s, id) !== saved[id]) {
+      changed = calmSet(s, id, saved[id]) || changed;
+    }
   }
+  if (changed) calmCommit(s);
   try {
     writeFileSync(CALM_STATS_PREF, JSON.stringify({}));
   } catch {
@@ -301,7 +420,7 @@ export default function (pi) {
   let tui = null; // captured from the probe widget factory
   let mode = null; // InteractiveMode ctx, found via tui tree
   let ui = null; // ExtensionUIContext, captured at session_start
-  let listenerInstalled = false;
+  let pollTimer = null; // flag-sync interval (replaces onEffectiveChange)
   let exportRestoreTimer = null;
 
   const shipAnimation = createCalmWorkingShipAnimation();
@@ -332,7 +451,10 @@ export default function (pi) {
     const Ka = pi.pi?.ToolExecutionComponent;
     const Cu = pi.pi?.ReadToolGroupComponent;
     const Vu = pi.pi?.AssistantMessageComponent;
-    for (const child of m.chatContainer.children) {
+    const chatKids = Array.isArray(m.chatContainer.children)
+      ? m.chatContainer.children
+      : [];
+    for (const child of chatKids) {
       if (!hidden && ((Ka && child instanceof Ka) || (Cu && child instanceof Cu))) {
         child.setExpanded?.(false);
       } else if (Vu && child instanceof Vu) {
@@ -365,33 +487,63 @@ export default function (pi) {
     }
   }
 
-  function ensureSettingsListener() {
-    if (listenerInstalled) return;
-    const s = settings();
-    if (!s || typeof s.onEffectiveChange !== "function") return;
-    listenerInstalled = true;
-    s.onEffectiveChange((path, value) => {
-      if (path !== "display.hideToolActivity") return;
-      const next = value === true;
-      if (next === calm) return;
-      calm = next;
-      if (calm) calmSuppressStats(s);
-      else calmRestoreStats(s);
-      applyToolVisibility();
-      rebuildTranscript();
-      applyWorkingPresentation(ui);
-    });
-  }
-
-  function setCalm(next, ui) {
-    const s = settings();
-    if (s) s.set("display.hideToolActivity", next);
+  // OMP 18.3+: onEffectiveChange needs Setting.source slots that aren't
+  // reachable from extensions. InteractiveMode mirrors the setting into
+  // ctx.hideToolActivity on every mutation path (keybinding, /settings, and
+  // its own settings sweep), so polling that flag catches every change.
+  // Legacy fallback kept for pre-18.3 binaries: callback signature (path, value).
+  function syncFromFlag(next, s) {
+    next = next === true;
+    if (next === calm) return;
     calm = next;
     if (calm) calmSuppressStats(s);
     else calmRestoreStats(s);
     applyToolVisibility();
     rebuildTranscript();
     applyWorkingPresentation(ui);
+  }
+
+  function ensureSettingsListener() {
+    if (pollTimer) return;
+    const s = settings();
+    if (!s) return;
+    if (calmSupportsNewApi(s)) {
+      pollTimer = setInterval(() => {
+        const m = findMode();
+        if (!m || typeof m.hideToolActivity !== "boolean") return;
+        if (m.hideToolActivity !== calm) syncFromFlag(m.hideToolActivity, m.settings ?? s);
+      }, 200);
+      pollTimer.unref?.();
+      return;
+    }
+    if (typeof s.onEffectiveChange !== "function") return;
+    try {
+      s.onEffectiveChange((path, value) => {
+        if (path !== CALM_HIDE_TOOL_ID) return;
+        syncFromFlag(value === true, s);
+      });
+    } catch {
+      pollTimer = setInterval(() => {
+        const m = findMode();
+        if (!m || typeof m.hideToolActivity !== "boolean") return;
+        if (m.hideToolActivity !== calm) syncFromFlag(m.hideToolActivity, m.settings ?? s);
+      }, 200);
+      pollTimer.unref?.();
+    }
+  }
+
+  function setCalm(next, ui) {
+    const s = settings();
+    if (s) calmSet(s, CALM_HIDE_TOOL_ID, next);
+    calm = next === true;
+    const m = findMode();
+    if (m) m.hideToolActivity = calm;
+    if (calm) calmSuppressStats(s);
+    else calmRestoreStats(s);
+    applyToolVisibility();
+    rebuildTranscript();
+    applyWorkingPresentation(ui);
+    if (s) calmCommit(s);
   }
 
   // The probe widget is invisible (renders nothing) and sits below the editor so
@@ -415,14 +567,15 @@ export default function (pi) {
     installProbe(ctx.ui);
     ensureSettingsListener();
     const s = settings();
-    if (s) {
-      // Always start calm: even if a previous session toggled /calm off and
-      // persisted hideToolActivity:false, new sessions default back to ON.
-      s.set("display.hideToolActivity", true);
-      calm = s.get("display.hideToolActivity") === true;
-      if (calm) calmSuppressStats(s);
-    }
+    // Always start calm: even if a previous session toggled /calm off and
+    // persisted hideToolActivity:false, new sessions default back to ON.
+    if (s) calmSet(s, CALM_HIDE_TOOL_ID, true);
+    calm = true;
+    const m = findMode();
+    if (m) m.hideToolActivity = true;
+    calmSuppressStats(s);
     applyToolVisibility();
+    if (s) calmCommit(s);
     try {
       installCalmAssistantLayout(pi, () => calm);
     } catch (error) {
@@ -444,6 +597,10 @@ export default function (pi) {
 
   pi.on("session_shutdown", async () => {
     agentRunActive = false;
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
     clearTimeout(exportRestoreTimer);
   });
 
@@ -473,8 +630,11 @@ export default function (pi) {
       if (!text.startsWith("/export") && !text.startsWith("/share")) return;
       const m = findMode();
       if (!m) return;
+      const chatKids = Array.isArray(m.chatContainer.children)
+        ? m.chatContainer.children
+        : [];
       m.chatContainer.setToolActivityVisible?.(true);
-      for (const child of m.chatContainer.children) {
+      for (const child of chatKids) {
         const Vu = pi.pi?.AssistantMessageComponent;
         if (Vu && child instanceof Vu) child.setToolResultImagesVisible?.(true);
       }
