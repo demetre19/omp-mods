@@ -10,6 +10,7 @@ This collection documents practical changes made to OMP's terminal UI, prompt ed
 
 | Improvement | Quality-of-life benefit | Guide |
 | --- | --- | --- |
+| Collapsible thinking disclosure | Keeps reasoning hidden behind a compact `Ctrl+T` disclosure row while preserving the ability to inspect it. Two install paths: a **drop-in extension** (`thinking-disclosure.js`, no rebuild, `/thinking-disclosure` toggles) and a verified source patch for OMP 18.0.11 plus a paused update-reinstaller prototype | [`docs/thinking-disclosure.md`](./docs/thinking-disclosure.md) and [`artifacts/thinking-disclosure/`](./artifacts/thinking-disclosure/) |
 | Inline spellcheck and autocorrect | Corrects high-confidence prompt typos after a delimiter without opening a distracting word-suggestion dropdown. Includes Australian English, learned words, custom replacements, mobile input chunks, and code-aware guardrails | [`docs/spellcheck-autocorrect.md`](./docs/spellcheck-autocorrect.md) and [`artifacts/spellcheck-reference/`](./artifacts/spellcheck-reference/) |
 | Calm mode (extension) | Hides every tool-call/tool-result row so the transcript reads as agent prose, with an animated boat while the agent works. Drop-in extension — no rebuild; `/calm` toggles, on by default | [`docs/calm-extension.md`](./docs/calm-extension.md) and [`artifacts/calm/`](./artifacts/calm/) |
 | Responsive two-row status line | Uses two status rows on narrow phone terminals and one row on wider desktop terminals so important session information remains readable | [`docs/responsive-two-row-status-line.md`](./docs/responsive-two-row-status-line.md) |
@@ -48,7 +49,7 @@ This repository preserves recoverable implementation artifacts plus detailed ver
 
 ## Related repository
 
-CMUX-only and joint CMUX integrations are kept separately in [`demetre19/cmux-mods`](https://github.com/demetre19/cmux-mods). That repository includes the CMUX side of the shared project picker.
+Herdr-only and joint Herdr integrations are kept separately in [`demetre19/herdr-mods`](https://github.com/demetre19/herdr-mods). That repository includes the Herdr side of the shared project picker.
 
 ## Build notes
 

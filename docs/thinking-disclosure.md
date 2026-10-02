@@ -10,6 +10,25 @@ OMP normally either renders every reasoning block inline or removes it from the 
 
 The model still reasons normally. This is a display change, not a reduction in reasoning effort. `Ctrl+T` remains OMP's existing global thinking-visibility action; the transcript row is a keyboard disclosure, not a mouse target.
 
+Two install paths exist:
+
+- **Drop-in extension** — [`thinking-disclosure.js`](../artifacts/thinking-disclosure/thinking-disclosure.js).
+  Copy it to `~/.omp/agent/extensions/` and restart OMP. It reproduces the
+  collapsed-row presentation at render time by wrapping
+  `AssistantMessageComponent.prototype` (`updateContent` marks thinking
+  content, `render` appends the label row while hidden, `setHideThinkingBlock`
+  tracks the toggle). No rebuild, survives `omp update`, toggles live with
+  `/thinking-disclosure`, and persists `thinkingDisclosure` through OMP's own
+  settings store. Verified against **18.4.8**. Limitations vs the binary patch:
+  the row is appended to the component's rendered rows, so it appears after
+  the turn's visible content rather than at the block's original position;
+  exports and native-terminal (Tern) surfaces are unaffected; and if calm.js
+  also filters thinking, the row relies on calm's `lastMessage` shadow field.
+- **Binary patch** (below) — the original implementation, needed only if you
+  want the row inside exported transcripts/snapshots or the source-level
+  `thinkingDisclosure` schema entry. Requires rebuilding the binary per
+  release and is overwritten by `omp update`.
+
 ## Tested base
 
 - OMP: `18.0.11`
