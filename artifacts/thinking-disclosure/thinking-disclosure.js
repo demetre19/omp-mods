@@ -42,9 +42,10 @@
 // double-render the row.
 //
 // Install: copy this file to ~/.omp/agent/extensions/ and restart OMP.
-//          On a stock binary `omp config set thinkingDisclosure` fails
-//          (unknown key) — enable in-session with /thinking-disclosure, which
-//          persists to the global settings store. Defaults ON once installed.
+//          With `hideThinkingBlock` on, hidden thinking leaves a muted
+//          `▸ Thinking · Ctrl+T to expand` row instead of deleting the
+//          reasoning. Defaults OFF (row suppressed, all hidden like stock);
+//          /thinking-disclosure toggles and persists to the settings store.
 
 const TD_PATCH = Symbol.for("omp:thinking-disclosure:v1");
 const TD_SETTING_ID = "thinkingDisclosure";
@@ -211,11 +212,14 @@ function installDisclosurePatch(pi, hooks) {
 }
 
 export default function (pi) {
-  let on = true;
+  const settings = () => pi.pi?.settings;
+  // Default OFF: a fresh install with no `thinkingDisclosure` key hides hidden
+  // thinking completely (the pre-mod behavior). /thinking-disclosure writes the
+  // flag via the settings store, so off is also what a user who toggles it off
+  // once sees forever.
+  let on = tdGet(settings(), TD_SETTING_ID, false);
   let tui = null;
   let mode = null;
-
-  const settings = () => pi.pi?.settings;
 
   function findMode() {
     if (mode) return mode;
@@ -279,7 +283,7 @@ export default function (pi) {
       { placement: "belowEditor" },
     );
     const s = settings();
-    on = tdGet(s, TD_SETTING_ID, true);
+    on = tdGet(s, TD_SETTING_ID, false);
     const installed = installSafely();
     if (!installed.ok) ctx.ui.notify(`Thinking disclosure unavailable (${installed.error})`, "warning");
   });
